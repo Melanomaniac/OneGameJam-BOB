@@ -1,7 +1,9 @@
-use bevy::{input_focus::InputFocus, log::tracing_subscriber::fmt::time, prelude::*};
+use bevy::{ecs::component, input_focus::InputFocus, log::tracing_subscriber::fmt::time, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
+mod loot;
+use loot::*;
 
 const NORMAL_ATTACK: Color = Color::srgb(1.0,0.0, 0.0);
 const NORMAL_BUILD: Color = Color::srgb(0.9,0.3, 0.0);
@@ -11,12 +13,35 @@ const HEAD_COLOR: Color = Color::srgb(0.0, 0.0, 1.0); //Removed later when not j
 
 #[derive(Resource)]
 struct GridState {
-    next_position: usize,
+    occupied_positions: Vec<bool>,  // Track which positions are occupied
 } 
 
 impl Default for GridState {
     fn default() -> Self {
-        Self { next_position: 0}
+        Self { 
+            occupied_positions: vec![false; 50]  // Support up to 50 grid positions
+        }
+    }
+}
+
+impl GridState {
+    // Find the first available (unoccupied) grid position
+    fn find_first_available(&self) -> Option<usize> {
+        self.occupied_positions.iter().position(|&occupied| !occupied)
+    }
+    
+    // Mark a position as occupied
+    fn occupy(&mut self, position: usize) {
+        if position < self.occupied_positions.len() {
+            self.occupied_positions[position] = true;
+        }
+    }
+    
+    // Mark a position as free
+    fn free(&mut self, position: usize) {
+        if position < self.occupied_positions.len() {
+            self.occupied_positions[position] = false;
+        }
     }
 }
 
@@ -33,6 +58,16 @@ struct StartAttackingEvent;
 struct Head;
 
 #[derive(Component)]
+struct Body;
+
+#[derive(Component)]
+struct Legs;
+
+#[derive(Component)]
+struct Arms;
+
+
+#[derive(Component)]
 struct HeadInventory {
     count: u32,
 }
@@ -46,6 +81,7 @@ struct Enemy;
 #[derive(Component)]
 struct Bob{
     state: BobState,
+    grid_position: usize,  // Each Bob remembers its own grid slot
 }
 
 enum BobState {
@@ -250,7 +286,7 @@ fn movement_system(
 
         let current_position = transform.translation.xy();
         let distance = target.distance(current_position);
-        if distance > 5.0 {
+        if distance >= 0.0 {
             let direction = (target-current_position).normalize();
             transform.translation.x += direction.x * movement_speed * time.delta_secs();
             transform.translation.y += direction.y * movement_speed * time.delta_secs();
@@ -259,14 +295,32 @@ fn movement_system(
 }
 
 fn scouting_system(
-    mut query: Query<(Entity, &Bob), With<Head>>,
+    mut query: Query<(Entity, &mut Bob, Option<&Scout>), With<Head>>,
     mut commands: Commands,
+    mut grid_state: ResMut<GridState>,
 ) {
-    for (entity, bob) in query.iter_mut() {
+    for (entity, mut bob, maybe_scout) in query.iter_mut() {
         if matches!(bob.state, BobState::Scouting) {
-            // Additional scouting logic can go here
-            // For now, when a bob finishes scouting (Movement component removed), despawn it
-            // This will be triggered after movement_system removes the Movement component
+            // When scout component is added, the bob has reached the target
+            if maybe_scout.is_some() {
+                // Generate random loot!
+                let loot = generate_random_loot();
+                println!("Scout {:?} found loot: {:?} x{}", entity, loot.loot_type, loot.quantity);
+                
+                // TODO: Add loot to inventory
+                // For now, just attach it as a component to the bob
+                commands.entity(entity).insert(loot);
+                commands.entity(entity).remove::<Scout>();
+                
+                // Find first available grid position and assign it
+                if let Some(new_grid_pos) = grid_state.find_first_available() {
+                    bob.grid_position = new_grid_pos;
+                    grid_state.occupy(new_grid_pos);
+                    bob.state = BobState::Idling;
+                } else {
+                    println!("Warning: No available grid position for returning scout!");
+                }
+            }
         }
     }
 }
@@ -276,6 +330,7 @@ fn attacking_system(
     mut enemy_query: Query<&mut Health, With<Enemy>>,
     time: Res<Time>,
     mut commands: Commands,
+    mut grid_state: ResMut<GridState>,
 ) {
     for (entity, mut bob, mut attack) in bob_query.iter_mut() {
         if attack.current_cooldown <= 0.0 {
@@ -289,9 +344,17 @@ fn attacking_system(
                     commands.entity(attack.target_entity).despawn();
                 }
             } else {
-                // Target no longer exists, remove Attack component
+                // Target no longer exists, remove Attack component and return to grid
                 commands.entity(entity).remove::<Attack>();
-                bob.state = BobState::Idling;
+                
+                // Find first available grid position and assign it
+                if let Some(new_grid_pos) = grid_state.find_first_available() {
+                    bob.grid_position = new_grid_pos;
+                    grid_state.occupy(new_grid_pos);
+                    bob.state = BobState::Idling;
+                } else {
+                    println!("Warning: No available grid position for returning attacker!");
+                }
                 continue;
             }
             attack.current_cooldown = attack.max_cooldown;
@@ -302,10 +365,9 @@ fn attacking_system(
 }
 
 fn bob_system(
-    mut query: Query<(Entity, &Bob, &Transform, Option<&Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
-    mut enemy_query: Query<(Entity, &Transform, &Enemy, &Health)>,
+    query: Query<(Entity, &Bob, &Transform, Option<&Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
+    enemy_query: Query<(Entity, &Transform, &Enemy, &Health)>,
     mut commands: Commands,
-    mut grid_state: ResMut<GridState>
 ) {
 
     // Position for scouting
@@ -321,16 +383,15 @@ fn bob_system(
                     data
                 } else {
                     // No enemy found, exit early without doing anything
-                    BobState::Idling;
                     return;
                 };
                 
-                let (enemy_entity, enemy_transform, enemy, enemy_health) = enemy_data;
+                let (enemy_entity, enemy_transform, _enemy, enemy_health) = enemy_data;
                 let attack_target_pos = enemy_transform.translation.xy();
 
                 // is it in distance of attack target?
                 let distance_to_target = transform.translation.xy().distance(attack_target_pos);
-                if distance_to_target > 5.0 {
+                if distance_to_target > 1.0 {
                     // not in range yet, make it move towards the target
                     if maybe_movement.is_none() {
                         commands.entity(entity).insert(Movement {
@@ -340,7 +401,7 @@ fn bob_system(
                     }
                 } else {
                     // in range, remove Movement component to stop moving 
-                    if let Some(movement) = maybe_movement {
+                    if maybe_movement.is_some() {
                         commands.entity(entity).remove::<Movement>();
                     }
 
@@ -357,9 +418,9 @@ fn bob_system(
                 }                
             },
             BobState::Idling => {
-                let grid_pos = calculate_grid_position(grid_state.next_position);
+                let grid_pos = calculate_grid_position(bob.grid_position);
                 let distance_to_target = transform.translation.xy().distance(grid_pos);
-                if distance_to_target > 5.0 {
+                if distance_to_target > 1.0 {
                     // not in range yet, make it move towards the target
                     if maybe_movement.is_none() {
                         commands.entity(entity).insert(Movement {
@@ -369,7 +430,7 @@ fn bob_system(
                     }
                 } else {
                     // in range, remove Movement component to stop moving 
-                    if let Some(movement) = maybe_movement {
+                    if maybe_movement.is_some() {
                         commands.entity(entity).remove::<Movement>();
                     } 
                 }
@@ -378,7 +439,7 @@ fn bob_system(
 
                 // is it in distance of scouting target?
                 let distance_to_target = transform.translation.xy().distance(scout_target);
-                if distance_to_target > 5.0 {
+                if distance_to_target > 1.0 {
                     // not in range yet, make it move towards the target
                     if maybe_movement.is_none() {
                         commands.entity(entity).insert(Movement {
@@ -388,7 +449,7 @@ fn bob_system(
                     }
                 } else {
                     // in range, remove Movement component to stop moving 
-                    if let Some(movement) = maybe_movement {
+                    if maybe_movement.is_some() {
                         commands.entity(entity).remove::<Movement>();
                     } 
 
@@ -410,7 +471,7 @@ fn on_attack(
     // Find the first idle bob and change its state directly
     if let Some((entity, mut bob)) = query.iter_mut().find(|(_, bob)| matches!(bob.state, BobState::Idling)) {
         bob.state = BobState::Attacking;
-        grid_state.next_position -= 1; // since one bob has left the grid, we decrease next position in grid
+        grid_state.free(bob.grid_position);  // Free up this Bob's grid position
         println!("Sent head {:?} on attacking mission!", entity);
     } else {
         println!("There are no idle bobs available!");
@@ -425,7 +486,7 @@ fn on_scout(
     // Find the first idle bob and change its state directly
     if let Some((entity, mut bob)) = query.iter_mut().find(|(_, bob)| matches!(bob.state, BobState::Idling)) {
         bob.state = BobState::Scouting;
-        grid_state.next_position -= 1; // since one bob has left the grid, we decrease next position in grid
+        grid_state.free(bob.grid_position);  // Free up this Bob's grid position
         println!("Sent head {:?} on scouting mission!", entity);
     } else { 
         println!("There are no idle bobs available!"); 
@@ -443,26 +504,33 @@ fn on_build_bob (
         println!("Found {} heads in inventory", inventory.count);
         
         if inventory.count > 0 {
-            // Deduct one head from inventory
-            inventory.count -= 1;
-            println!("Used 1 head, {} remaining", inventory.count);
-            
-            let grid_pos = calculate_grid_position(grid_state.next_position);
-            grid_state.next_position += 1;
+            // Find the first available grid position
+            if let Some(grid_position) = grid_state.find_first_available() {
+                // Deduct one head from inventory
+                inventory.count -= 1;
+                println!("Used 1 head, {} remaining", inventory.count);
+                
+                let grid_pos = calculate_grid_position(grid_position);
+                grid_state.occupy(grid_position);  // Mark this position as occupied
 
-            commands.spawn((
-                Bob { state: BobState::Idling },
-                Head,
-                Health::new(50.0),
-                Sprite {
-                    color: HEAD_COLOR,
-                    custom_size: Some(Vec2::new(25.0, 25.0)),
-                    ..default()
-                },
-                Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
-                Name::new("Bob"),
-            ));//.observe(update_selected_on);
-
+                commands.spawn((
+                    Bob { 
+                        state: BobState::Idling,
+                        grid_position,  // Store the grid position in the Bob
+                    },
+                    Head,
+                    Health::new(50.0),
+                    Sprite {
+                        color: HEAD_COLOR,
+                        custom_size: Some(Vec2::new(25.0, 25.0)),
+                        ..default()
+                    },
+                    Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
+                    Name::new("Bob"),
+                ));//.observe(update_selected_on);
+            } else {
+                println!("Grid is full! Cannot spawn more Bobs.");
+            }
         } else {
             println!("No heads available in inventory!");
         }
