@@ -1,4 +1,4 @@
-use bevy::{input_focus::InputFocus, prelude::*};
+use bevy::{input_focus::InputFocus, log::tracing_subscriber::fmt::time, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
@@ -101,9 +101,10 @@ struct Scout;
 
 #[derive(Component)]
 struct Attack{
-    target: Entity,
+    target_entity: Entity,  // Reference to the enemy entity
     damage: f32,
-    cooldown: f32,
+    max_cooldown: f32,
+    current_cooldown: f32,
 }
 
 fn main() {
@@ -117,7 +118,7 @@ fn main() {
         .add_observer(on_attack)
         .add_observer(on_scout)
         .add_systems(Startup, (setup, test_data))
-        .add_systems(Update, (button_system, bob_system, movement_system, scouting_system))
+        .add_systems(Update, (button_system, bob_system, movement_system, scouting_system, attacking_system))
         .run();
 }
 
@@ -270,6 +271,34 @@ fn scouting_system(
     }
 }
 
+fn attacking_system(
+    mut bob_query: Query<(Entity, &Bob, &mut Attack)>,
+    mut enemy_query: Query<&mut Health, With<Enemy>>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    for (entity, bob, mut attack) in bob_query.iter_mut() {
+        if attack.current_cooldown <= 0.0 {
+            // Try to get the enemy's health and apply damage
+            if let Ok(mut health) = enemy_query.get_mut(attack.target_entity) {
+                health.take_damage(attack.damage);
+                println!("Bob {:?} dealt {} damage! Enemy health: {}/{}", entity, attack.damage, health.current, health.max);
+                
+                if health.is_dead() {
+                    println!("Enemy defeated!");
+                    commands.entity(attack.target_entity).despawn();
+                }
+            } else {
+                // Target no longer exists, remove Attack component
+                commands.entity(entity).remove::<Attack>();
+            }
+            attack.current_cooldown = attack.max_cooldown;
+        } else {
+            attack.current_cooldown -= time.delta_secs();
+        }
+    }
+}
+
 fn bob_system(
     mut query: Query<(Entity, &Bob, &Transform, Option<&Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
     mut enemy_query: Query<(Entity, &Transform, &Enemy, &Health)>,
@@ -316,9 +345,10 @@ fn bob_system(
                     if enemy_health.is_dead() == false {
                         if maybe_attack.is_none() {
                             commands.entity(entity).insert(Attack {
-                                target: enemy_entity,
+                                target_entity: enemy_entity,
                                 damage: 10.0,
-                                cooldown: 1.0,
+                                max_cooldown: 1.0,
+                                current_cooldown: 0.0,  // Start at 0 to attack immediately
                             });
                         }
                     }
