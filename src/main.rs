@@ -3,7 +3,7 @@ use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
 mod ui;
-use ui::setup_build_bob_ui;
+use ui::*;
 mod loot;
 use loot::*;
 
@@ -70,7 +70,7 @@ struct Arms;
 
 
 #[derive(Component)]
-struct HeadInventory {
+struct ComponentsInventory {
     count: u32,
 }
 
@@ -153,17 +153,18 @@ fn main() {
         .init_resource::<InputFocus>()
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
+        .add_observer(on_reset_ui)
         .add_observer(on_attack)
         .add_observer(on_scout)
         .add_systems(Startup, (setup, test_data, setup_build_bob_ui))
-        .add_systems(Update, (button_system, bob_system, movement_system, scouting_system, attacking_system))
+        .add_systems(Update, (button_system, build_bob_ui_system ,bob_system, movement_system, scouting_system, attacking_system))
         .run();
 }
 
 
 //TODO, DELETE THIS LATER, ONLY FOR TESTING
 fn test_data(mut commands:Commands) {
-    commands.spawn(HeadInventory { count: 10 });
+    commands.spawn(ComponentsInventory { count: 10 });
 }
 
 fn setup(mut commands: Commands) {
@@ -499,11 +500,23 @@ fn on_scout(
 fn on_build_bob (
     _trigger: On<BuildBobEvent>,
     mut commands: Commands,
-    mut query: Query<&mut HeadInventory>, //can be changed to inventory later?
-    mut grid_state: ResMut<GridState>
+    mut query: Query<&mut ComponentsInventory>, //can be changed to inventory later?
+    mut grid_state: ResMut<GridState>,
+    slot_query: Query<&SlotFilled, Or<(With<HeadSlot>, With<BodySlot>, With<LeftArmSlot>, With<RightArmSlot>, With<LeftLegSlot>, With<RightLegSlot>)>>,
 ) {
     if let Ok(mut inventory) = query.single_mut() {
         println!("Found {} heads in inventory", inventory.count);
+
+         // Check if all 6 slots are filled
+        let filled_slots = slot_query.iter().filter(|slot| slot.0).count();
+        let total_slots = slot_query.iter().count();
+        
+        println!("Filled slots: {}/{}", filled_slots, total_slots);
+        
+        if filled_slots < total_slots {
+            println!("Cannot build Bob! Not all body parts are placed. Need {}/{} slots filled.", filled_slots, total_slots);
+            return; // Exit early if not all slots are filled
+        }
         
         if inventory.count > 0 {
             // Find the first available grid position
@@ -530,6 +543,7 @@ fn on_build_bob (
                     Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                     Name::new("Bob"),
                 ));//.observe(update_selected_on);
+                commands.trigger(ResetBuilderUIEvent); //reset builder
             } else {
                 println!("Grid is full! Cannot spawn more Bobs.");
             }

@@ -1,4 +1,46 @@
 use bevy::prelude::*;
+use crate::ComponentsInventory;
+
+const GREEN_COLOR: Color = Color::srgb(0.0, 1.0, 0.0);
+
+#[derive(Event)]
+pub struct ResetBuilderUIEvent;
+
+// Add component markers to identify each body part slot
+#[derive(Component)]
+pub struct HeadSlot;
+
+#[derive(Component)]
+pub struct BodySlot;
+
+#[derive(Component)]
+pub struct LeftArmSlot;
+
+#[derive(Component)]
+pub struct RightArmSlot;
+
+#[derive(Component)]
+pub struct LeftLegSlot;
+
+#[derive(Component)]
+pub struct RightLegSlot;
+
+// Component to track if a slot is filled
+#[derive(Component)]
+pub struct SlotFilled(pub bool);
+
+pub fn on_reset_ui(
+    _trigger: On<ResetBuilderUIEvent>,
+    mut slot_query: Query<(Entity, &mut SlotFilled, &mut BackgroundColor), Or<(With<HeadSlot>, With<BodySlot>, With<LeftArmSlot>, With<RightArmSlot>, With<LeftLegSlot>, With<RightLegSlot>)>>,
+) {
+    for (entity, mut slot_filled, mut bg_color) in slot_query.iter_mut() {
+        if slot_filled.0 {
+            slot_filled.0 = false;
+            *bg_color = BackgroundColor(Color::BLACK);
+            println!("Reset slot: {:?}", entity);
+        }
+    }
+}
 
 pub fn setup_build_bob_ui(mut commands: Commands) {
     commands.spawn((
@@ -31,6 +73,9 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::BLACK),
+            Interaction::None, // Make clickable
+            HeadSlot, // Add identifier
+            SlotFilled(false), // Track if filled
         ));
 
         // Body + Arms row (horizontal container)
@@ -55,6 +100,9 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
+                Interaction::None,
+                LeftArmSlot,
+                SlotFilled(false),
             ));
 
             // Body (center)
@@ -66,6 +114,9 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
+                Interaction::None,
+                BodySlot,
+                SlotFilled(false),
             ));
 
             // Right arm
@@ -77,6 +128,9 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
+                Interaction::None,
+                RightArmSlot,
+                SlotFilled(false),
             ));
         });
 
@@ -102,6 +156,9 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
+                Interaction::None,
+                LeftLegSlot,
+                SlotFilled(false),
             ));
 
             // Right leg
@@ -114,7 +171,49 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
                     ..default()
                 },
                 BackgroundColor(Color::BLACK),
+                Interaction::None,
+                RightLegSlot,
+                SlotFilled(false),
             ));
         });
     });
+}
+
+
+pub fn build_bob_ui_system(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut SlotFilled), 
+        (Changed<Interaction>, Or<(With<HeadSlot>, With<BodySlot>, With<LeftArmSlot>, With<RightArmSlot>, With<LeftLegSlot>, With<RightLegSlot>)>)
+    >,
+    mut inventory_query: Query<&mut ComponentsInventory>,
+) {
+    for (interaction, mut bg_color, mut slot_filled) in &mut interaction_query {
+        if *interaction == Interaction::Pressed {
+            if let Ok(mut inventory) = inventory_query.single_mut() {
+                // Check if slot is already filled
+                if slot_filled.0 {
+                    println!("Slot already filled!");
+                    continue;
+                }
+
+                // Check if we have components in inventory
+                if inventory.count > 0 {
+                    // Fill the slot (turn green)
+                    *bg_color = BackgroundColor(GREEN_COLOR);
+                    slot_filled.0 = true;
+                    
+                    // Decrease inventory (you might want to be more specific about which type)
+                    // For now, just decrease the first available component
+                    if inventory.count > 0 {
+                        inventory.count -= 1;
+                        println!("Used 1 component. Remaining: {}", inventory.count);
+                    }
+                } else {
+                    println!("No components available in inventory!");
+                }
+            } else {
+                println!("No inventory found!");
+            }
+        }
+    }
 }
