@@ -29,11 +29,6 @@ struct StartScoutingEvent;
 #[derive(Event)]
 struct StartAttackingEvent;
 
-#[derive(Event)]
-struct TargetReachedEvent {
-    entity: Entity,
-}
-
 #[derive(Component)]
 struct Head;
 
@@ -105,7 +100,11 @@ struct Movement {
 struct Scout;
 
 #[derive(Component)]
-struct Attack;
+struct Attack{
+    target: Entity,
+    damage: f32,
+    cooldown: f32,
+}
 
 fn main() {
     App::new()
@@ -117,7 +116,6 @@ fn main() {
         .add_observer(on_build_bob)
         .add_observer(on_attack)
         .add_observer(on_scout)
-        .add_observer(on_target_reached)  // Add this line!
         .add_systems(Startup, (setup, test_data))
         .add_systems(Update, (button_system, bob_system, movement_system, scouting_system))
         .run();
@@ -273,32 +271,84 @@ fn scouting_system(
 }
 
 fn bob_system(
-    mut query: Query<(Entity, &Bob, &Transform, &mut Movement, Option<&Scout>, Option<&Attack>), With<Head>>,
+    mut query: Query<(Entity, &Bob, &Transform, Option<&Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
+    mut enemy_query: Query<(Entity, &Transform, &Enemy, &Health)>,
     mut commands: Commands,
+    mut grid_state: ResMut<GridState>
 ) {
 
-    let attack_target = Vec2::new(0.0, 200.0); // Position of the enemy for attacking
-    let scout_target = Vec2::new(0.0, -400.0); // Position for scouting
+    // Position for scouting
+    let scout_target = Vec2::new(0.0, -400.0); 
 
-    for (entity, bob,  transform, mut movement, maybe_scout, maybe_attack) in query.iter_mut() {
+    for (entity, bob,  transform, maybe_movement, maybe_scout, maybe_attack) in query.iter() {
         match bob.state {
             BobState::Attacking => {
                 // Attack logic here - check if it has Movement component for attack behavior
-                let distance_to_target = transform.translation.xy().distance(attack_target);
-                if(distance_to_target > 5.0){
-                     movement.target = attack_target;
-                     movement.speed = 100.0;
-                }
+
+                // query for any entity with enemy component
+                let enemy_data = if let Some(data) = enemy_query.iter().next() {
+                    data
+                } else {
+                    // No enemy found, exit early without doing anything
+                    BobState::Idling;
+                    return;
+                };
+                
+                let (enemy_entity, enemy_transform, enemy, enemy_health) = enemy_data;
+                let attack_target_pos = enemy_transform.translation.xy();
+
+                // is it in distance of attack target?
+                let distance_to_target = transform.translation.xy().distance(attack_target_pos);
+                if distance_to_target > 5.0 {
+                    // not in range yet, make it move towards the target
+                    if maybe_movement.is_none() {
+                        commands.entity(entity).insert(Movement {
+                            speed: 100.0,
+                            target: attack_target_pos,
+                        });
+                    }
+                } else {
+                    // in range, remove Movement component to stop moving 
+                    if let Some(movement) = maybe_movement {
+                        commands.entity(entity).remove::<Movement>();
+                    }
+
+                    if enemy_health.is_dead() == false {
+                        if maybe_attack.is_none() {
+                            commands.entity(entity).insert(Attack {
+                                target: enemy_entity,
+                                damage: 10.0,
+                                cooldown: 1.0,
+                            });
+                        }
+                    }
+                }                
             },
             BobState::Idling => {
-                // Idle logic here - make sure no Movement component
-                return;
+                // Idle logic here - just skip to next iteration
+                continue;
             },
             BobState::Scouting => {                
+
+                // is it in distance of scouting target?
                 let distance_to_target = transform.translation.xy().distance(scout_target);
-                if  distance_to_target > 5.0 {
-                     movement.target = scout_target;
-                     movement.speed = 100.0;
+                if distance_to_target > 5.0 {
+                    // not in range yet, make it move towards the target
+                    if maybe_movement.is_none() {
+                        commands.entity(entity).insert(Movement {
+                            speed: 100.0,
+                            target: scout_target,
+                        });
+                    }
+                } else {
+                    // in range, remove Movement component to stop moving 
+                    if let Some(movement) = maybe_movement {
+                        commands.entity(entity).remove::<Movement>();
+                    } 
+
+                    if maybe_scout.is_none() {
+                        commands.entity(entity).insert(Scout);
+                    }
                 }
             }
         }
@@ -336,24 +386,6 @@ fn on_scout(
     }
 }
 
-fn on_target_reached(
-    trigger: On<TargetReachedEvent>,
-    query: Query<&Bob>,
-    mut commands: Commands,
-) {
-    let entity = trigger.event().entity;
-    
-    if let Ok(bob) = query.get(entity) {
-        if matches!(bob.state, BobState::Scouting) {
-            println!("Scouting bob {:?} has reached its target and will be despawned.", entity);
-            commands.entity(entity).insert(Scout);
-        } else if matches!(bob.state, BobState::Attacking) {
-            println!("Attacking bob {:?} has reached its target and will start attacking.", entity);
-            commands.entity(entity).insert(Attack);
-        }
-    }
-}   
-
 // New system to handle bob building
 fn on_build_bob (
     _trigger: On<BuildBobEvent>,
@@ -383,10 +415,6 @@ fn on_build_bob (
                 },
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                 Name::new("Bob"),
-                Movement{
-                    speed: 0.0,
-                    target: Vec2::ZERO,
-                },
             ));//.observe(update_selected_on);
 
         } else {
