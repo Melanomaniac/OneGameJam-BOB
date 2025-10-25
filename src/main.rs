@@ -1,4 +1,5 @@
-use bevy::{input_focus::InputFocus, picking::pointer::PointerInteraction, prelude::*};
+use bevy::{input_focus::InputFocus, prelude::*};
+//use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
 
 const NORMAL_ATTACK: Color = Color::srgb(1.0,0.0, 0.0);
@@ -56,7 +57,7 @@ fn main() {
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
         .add_systems(Startup, (setup, test_data))
-        .add_systems(Update,button_system)
+        .add_systems(Update, button_system)
         .run();
 }
 
@@ -200,7 +201,7 @@ fn on_build_bob (
                 MeshMaterial2d(materials.add(HEAD_COLOR)),
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                 Name::new("Head"),
-            )).observe(update_selected_on);
+            ));//.observe(update_selected_on);
 
         } else {
             println!("No heads available in inventory!");
@@ -210,7 +211,7 @@ fn on_build_bob (
     }
 }
 
-fn update_selected_on(trigger: On<Pointer<Press>>, mut commands: Commands, mut query: Query<Entity, (With<Head>, With<Selected>)>)
+/*fn update_selected_on(trigger: On<Pointer<Press>>, mut commands: Commands, mut query: Query<Entity, (With<Head>, With<Selected>)>)
 {
     let clicked_entity =  query.get_mut(trigger.event_target()).unwrap(); //Should maybe not use unwrap here?
     println!("Head clicked: {:?}", clicked_entity);
@@ -227,7 +228,7 @@ fn update_selected_on(trigger: On<Pointer<Press>>, mut commands: Commands, mut q
     commands.entity(clicked_entity).insert(Selected);
     println!("Selected head entity: {:?}", clicked_entity);
 
-}
+}*/
 
 
 fn calculate_grid_position(position: usize) -> Vec2 {
@@ -237,7 +238,7 @@ fn calculate_grid_position(position: usize) -> Vec2 {
     const TOTAL_SPACING: f32 = SLOT_SIZE + PADDING; 
 
     const GRID_START_X: f32 = - 250.0; // start grid a bit to the left, with 3 items per row one row width should be 180 px and build button is 65 px wide =~ 250
-    const GRID_START_Y: f32 = -75.0; // Start in Center? maybe?
+    const GRID_START_Y: f32 = -75.0;
 
     let col = position % GRID_COLS;
     let row = position / GRID_COLS;
