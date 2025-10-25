@@ -1,4 +1,5 @@
 use bevy::{input_focus::InputFocus, prelude::*};
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
 
@@ -43,6 +44,18 @@ struct HeadInventory {
 struct Enemy;
 
 #[derive(Component)]
+struct Bob{
+    state: BobState,
+}
+
+enum BobState {
+    Attacking,
+    Idling,
+    Scouting,
+}
+
+
+#[derive(Component)]
 struct Health {
     current: f32,
     max: f32,
@@ -73,12 +86,12 @@ enum MenuButton {
     Scout,
 }
 
-#[derive(Component)]
-enum BobState {
-    Attacking,
-    Idling,
-    Scouting,
-}
+// #[derive(Component)]
+// enum BobState {
+//     Attacking,
+//     Idling,
+//     Scouting,
+// }
 
 #[derive(Component)]
 struct OriginalColor(Color);
@@ -87,6 +100,8 @@ struct OriginalColor(Color);
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
+        .add_plugins(EguiPlugin::default())
+        .add_plugins(bevy_inspector_egui::quick::WorldInspectorPlugin::new())
         .init_resource::<InputFocus>()
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
@@ -237,12 +252,12 @@ fn button_system(
 }
 
 fn scouting_system(
-    mut query: Query<(Entity, &mut Transform, &BobState), With<Head>>,
+    mut query: Query<(Entity, &mut Transform, &Bob), With<Head>>,
     mut commands: Commands,
     time: Res<Time>,
 ) {
-    for (entity, mut transform, state) in query.iter_mut() {
-        if matches!(state, BobState::Scouting) {
+    for (entity, mut transform, bob) in query.iter_mut() {
+        if matches!(bob.state, BobState::Scouting) {
             // Move towards bottom of screen
             let movement_speed = 50.0; // pixels per second
             let target = Vec2::new(0.0, -400.0); //maybe choose dynamically where the end of the screen is instead of hard numbers
@@ -279,12 +294,12 @@ fn on_attack(
 
 fn on_scout(
     _trigger: On<ScoutEvent>,
-    mut query: Query<(Entity, &mut BobState), With<Head>>,
+    mut query: Query<(Entity, &mut Bob), With<Head>>,
     mut grid_state: ResMut<GridState>,
 ) {
     // Find the first idle bob and change its state directly
-    if let Some((entity, mut state)) = query.iter_mut().find(|(_, state)| matches!(**state, BobState::Idling)) {
-        *state = BobState::Scouting;
+    if let Some((entity, mut bob)) = query.iter_mut().find(|(_, bob)| matches!(bob.state, BobState::Idling)) {
+        bob.state = BobState::Scouting;
         grid_state.next_position -= 1; // since one bob has left the grid, we decrease next position in grid
         println!("Sent head {:?} on scouting mission!", entity);
     } else { 
@@ -311,6 +326,7 @@ fn on_build_bob (
             grid_state.next_position += 1;
 
             commands.spawn((
+                Bob { state: BobState::Idling },
                 Head,
                 Health::new(50.0),
                 Sprite {
@@ -319,8 +335,7 @@ fn on_build_bob (
                     ..default()
                 },
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
-                Name::new("Head"),
-                BobState::Idling,
+                Name::new("Bob"),
             ));//.observe(update_selected_on);
 
         } else {
