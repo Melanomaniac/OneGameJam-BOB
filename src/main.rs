@@ -24,10 +24,15 @@ impl Default for GridState {
 struct BuildBobEvent;
 
 #[derive(Event)]
-struct ScoutEvent;
+struct StartScoutingEvent;
 
 #[derive(Event)]
-struct AttackEvent;
+struct StartAttackingEvent;
+
+#[derive(Event)]
+struct TargetReachedEvent {
+    entity: Entity,
+}
 
 #[derive(Component)]
 struct Head;
@@ -86,16 +91,21 @@ enum MenuButton {
     Scout,
 }
 
-// #[derive(Component)]
-// enum BobState {
-//     Attacking,
-//     Idling,
-//     Scouting,
-// }
 
 #[derive(Component)]
 struct OriginalColor(Color);
 
+#[derive(Component)]
+struct Movement {
+    speed: f32,
+    target: Vec2,
+}
+
+#[derive(Component)]
+struct Scout;
+
+#[derive(Component)]
+struct Attack;
 
 fn main() {
     App::new()
@@ -107,8 +117,9 @@ fn main() {
         .add_observer(on_build_bob)
         .add_observer(on_attack)
         .add_observer(on_scout)
+        .add_observer(on_target_reached)  // Add this line!
         .add_systems(Startup, (setup, test_data))
-        .add_systems(Update, (button_system, scouting_system))
+        .add_systems(Update, (button_system, bob_system, movement_system, scouting_system))
         .run();
 }
 
@@ -124,6 +135,11 @@ fn setup(mut commands: Commands) {
     // Spawn an enemy entity
     commands.spawn((
         Enemy,
+        Sprite{ color: Color::srgb(0.8, 0.2, 0.2),
+            custom_size: Some(Vec2::new(100.0,100.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 270.0, 1.0),
         Health::new(100.0),
         Name::new("Enemy"),
     ));
@@ -132,51 +148,23 @@ fn setup(mut commands: Commands) {
     let mut root = commands.spawn(
         Node {
             width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
+            height: Val::Percent(50.0),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::SpaceEvenly,
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(0.0),
             ..default()
         }
     );
     
-    spawn_sprite(&mut root, 100.0, 100.0, Color::srgb(0.8, 0.2, 0.2));
+    // spawn_sprite(&mut root, 100.0, 100.0, Color::srgb(0.8, 0.2, 0.2));
     
     spawn_button(&mut root, MenuButton::Attack, "Attack!", NORMAL_ATTACK);
     spawn_button(&mut root, MenuButton::Build,  "Build!",  NORMAL_BUILD);
     spawn_button(&mut root, MenuButton::Scout,  "Scout!",  NORMAL_SCOUT);
     
     //Should implement a bob spawning grid here (To the side of the build button
-}
-
-fn spawn_sprite(
-    parent: &mut EntityCommands,
-    width: f32,
-    height: f32,
-    colour: Color,
-) {
-    parent.with_children(|parent| {
-        parent.spawn((
-            Node {
-                width: Val::Px(width),
-                height: Val::Px(height),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(colour),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                Text::new("Enemy"),
-                TextFont {
-                    font_size: 20.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-        });
-    });
 }
 
 fn spawn_button(
@@ -231,9 +219,9 @@ fn button_system(
                 *bg_color = click_color.into();
 
                 match button_type {
-                    MenuButton::Attack => {commands.trigger(AttackEvent); println!("Clicked on Attack");},
+                    MenuButton::Attack => {commands.trigger(StartAttackingEvent); println!("Clicked on Attack");},
                     MenuButton::Build => {commands.trigger(BuildBobEvent); println!("Clicked on build");},
-                    MenuButton::Scout => {commands.trigger(ScoutEvent); println!("Clicked on Scout");},
+                    MenuButton::Scout => {commands.trigger(StartScoutingEvent); println!("Clicked on Scout");},
                 }
             },
 
@@ -251,50 +239,91 @@ fn button_system(
     }
 }
 
-fn scouting_system(
-    mut query: Query<(Entity, &mut Transform, &Bob), With<Head>>,
+fn movement_system(
+    mut query: Query<(Entity, &mut Transform, &Movement)>,
     mut commands: Commands,
-    time: Res<Time>,
-) {
-    for (entity, mut transform, bob) in query.iter_mut() {
-        if matches!(bob.state, BobState::Scouting) {
-            // Move towards bottom of screen
-            let movement_speed = 50.0; // pixels per second
-            let target = Vec2::new(0.0, -400.0); //maybe choose dynamically where the end of the screen is instead of hard numbers
+    time: Res<Time>, 
+) {    
+    for (entity, mut transform, movement) in query.iter_mut() {
 
-            let current_position = transform.translation.xy();
-            let distance = target.distance(current_position);
-            if distance > 5.0 {
-                let direction = (target-current_position).normalize();
-                transform.translation.x += direction.x * movement_speed * time.delta_secs();
-                transform.translation.y += direction.y * movement_speed * time.delta_secs();
-            }
-            else {
-                println!("Scout {:?} has reached the bottom! Removing from screen.", entity);
-                commands.entity(entity).despawn(); //Should probably add some more logic beyond this to set them into a queue or something
-                //so that they can return to idling after a certain amount of time, maybe a separate system?
+        let movement_speed = movement.speed; // pixels per second
+        let target = movement.target;
+
+        let current_position = transform.translation.xy();
+        let distance = target.distance(current_position);
+        if distance > 5.0 {
+            let direction = (target-current_position).normalize();
+            transform.translation.x += direction.x * movement_speed * time.delta_secs();
+            transform.translation.y += direction.y * movement_speed * time.delta_secs();
+        }
+    }
+}
+
+fn scouting_system(
+    mut query: Query<(Entity, &Bob), With<Head>>,
+    mut commands: Commands,
+) {
+    for (entity, bob) in query.iter_mut() {
+        if matches!(bob.state, BobState::Scouting) {
+            // Additional scouting logic can go here
+            // For now, when a bob finishes scouting (Movement component removed), despawn it
+            // This will be triggered after movement_system removes the Movement component
+        }
+    }
+}
+
+fn bob_system(
+    mut query: Query<(Entity, &Bob, &Transform, &mut Movement, Option<&Scout>, Option<&Attack>), With<Head>>,
+    mut commands: Commands,
+) {
+
+    let attack_target = Vec2::new(0.0, 200.0); // Position of the enemy for attacking
+    let scout_target = Vec2::new(0.0, -400.0); // Position for scouting
+
+    for (entity, bob,  transform, mut movement, maybe_scout, maybe_attack) in query.iter_mut() {
+        match bob.state {
+            BobState::Attacking => {
+                // Attack logic here - check if it has Movement component for attack behavior
+                let distance_to_target = transform.translation.xy().distance(attack_target);
+                if(distance_to_target > 5.0){
+                     movement.target = attack_target;
+                     movement.speed = 100.0;
+                }
+            },
+            BobState::Idling => {
+                // Idle logic here - make sure no Movement component
+                return;
+            },
+            BobState::Scouting => {                
+                let distance_to_target = transform.translation.xy().distance(scout_target);
+                if  distance_to_target > 5.0 {
+                     movement.target = scout_target;
+                     movement.speed = 100.0;
+                }
             }
         }
     }
 }
 
+
 fn on_attack(
-    _trigger: On<AttackEvent>,
-    mut enemy_query: Query<&mut Health, With<Enemy>>,
+    _trigger: On<StartAttackingEvent>,
+    mut query: Query<(Entity, &mut Bob)>,
+    mut grid_state: ResMut<GridState>,
 ) {
-    if let Ok(mut health) = enemy_query.single_mut() {
-        health.take_damage(10.0);
-        println!("Enemy took 10 damage! Current health: {}/{}", health.current, health.max);
-        
-        if health.is_dead() {
-            println!("Enemy defeated!");
-        }
+    // Find the first idle bob and change its state directly
+    if let Some((entity, mut bob)) = query.iter_mut().find(|(_, bob)| matches!(bob.state, BobState::Idling)) {
+        bob.state = BobState::Attacking;
+        grid_state.next_position -= 1; // since one bob has left the grid, we decrease next position in grid
+        println!("Sent head {:?} on attacking mission!", entity);
+    } else {
+        println!("There are no idle bobs available!");
     }
 }
 
 fn on_scout(
-    _trigger: On<ScoutEvent>,
-    mut query: Query<(Entity, &mut Bob), With<Head>>,
+    _trigger: On<StartScoutingEvent>,
+    mut query: Query<(Entity, &mut Bob)>,
     mut grid_state: ResMut<GridState>,
 ) {
     // Find the first idle bob and change its state directly
@@ -306,6 +335,24 @@ fn on_scout(
         println!("There are no idle bobs available!"); 
     }
 }
+
+fn on_target_reached(
+    trigger: On<TargetReachedEvent>,
+    query: Query<&Bob>,
+    mut commands: Commands,
+) {
+    let entity = trigger.event().entity;
+    
+    if let Ok(bob) = query.get(entity) {
+        if matches!(bob.state, BobState::Scouting) {
+            println!("Scouting bob {:?} has reached its target and will be despawned.", entity);
+            commands.entity(entity).insert(Scout);
+        } else if matches!(bob.state, BobState::Attacking) {
+            println!("Attacking bob {:?} has reached its target and will start attacking.", entity);
+            commands.entity(entity).insert(Attack);
+        }
+    }
+}   
 
 // New system to handle bob building
 fn on_build_bob (
@@ -336,6 +383,10 @@ fn on_build_bob (
                 },
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                 Name::new("Bob"),
+                Movement{
+                    speed: 0.0,
+                    target: Vec2::ZERO,
+                },
             ));//.observe(update_selected_on);
 
         } else {
