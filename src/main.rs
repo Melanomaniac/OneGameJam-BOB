@@ -40,6 +40,33 @@ struct HeadInventory {
 struct Selected;
 
 #[derive(Component)]
+struct Enemy;
+
+#[derive(Component)]
+struct Health {
+    current: f32,
+    max: f32,
+}
+
+impl Health {
+    fn new(max: f32) -> Self {
+        Self {
+            current: max,
+            max,
+        }
+    }
+
+    fn take_damage(&mut self, damage: f32) {
+        self.current = (self.current - damage).max(0.0);
+    }
+
+    fn is_dead(&self) -> bool {
+        self.current <= 0.0
+    }
+
+}
+
+#[derive(Component)]
 enum MenuButton {
     Attack,
     Build,
@@ -56,6 +83,7 @@ fn main() {
         .init_resource::<InputFocus>()
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
+        .add_observer(on_attack)
         .add_systems(Startup, (setup, test_data))
         .add_systems(Update, button_system)
         .run();
@@ -70,6 +98,13 @@ fn test_data(mut commands:Commands) {
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2d); //camera setup
 
+    // Spawn an enemy entity
+    commands.spawn((
+        Enemy,
+        Health::new(100.0),
+        Name::new("Enemy"),
+    ));
+
     //Buttons setup
     let mut root = commands.spawn(
         Node {
@@ -81,12 +116,44 @@ fn setup(mut commands: Commands) {
             ..default()
         }
     );
-
+    
+    spawn_sprite(&mut root, 100.0, 100.0, Color::srgb(0.8, 0.2, 0.2));
+    
     spawn_button(&mut root, MenuButton::Attack, "Attack!", NORMAL_ATTACK);
     spawn_button(&mut root, MenuButton::Build,  "Build!",  NORMAL_BUILD);
     spawn_button(&mut root, MenuButton::Scout,  "Scout!",  NORMAL_SCOUT);
     
     //Should implement a bob spawning grid here (To the side of the build button
+}
+
+fn spawn_sprite(
+    parent: &mut EntityCommands,
+    width: f32,
+    height: f32,
+    colour: Color,
+) {
+    parent.with_children(|parent| {
+        parent.spawn((
+            Node {
+                width: Val::Px(width),
+                height: Val::Px(height),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(colour),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Enemy"),
+                TextFont {
+                    font_size: 20.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+    });
 }
 
 fn spawn_button(
@@ -163,9 +230,16 @@ fn button_system(
 
 fn on_attack(
     _trigger: On<AttackEvent>,
-    mut commands: Commands,
+    mut enemy_query: Query<&mut Health, With<Enemy>>,
 ) {
-    todo!()
+    if let Ok(mut health) = enemy_query.single_mut() {
+        health.take_damage(10.0);
+        println!("Enemy took 10 damage! Current health: {}/{}", health.current, health.max);
+        
+        if health.is_dead() {
+            println!("Enemy defeated!");
+        }
+    }
 }
 
 fn on_scout(
@@ -180,8 +254,6 @@ fn on_build_bob (
     _trigger: On<BuildBobEvent>,
     mut commands: Commands,
     mut query: Query<&mut HeadInventory>, //can be changed to inventory later?
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
     mut grid_state: ResMut<GridState>
 ) {
     if let Ok(mut inventory) = query.single_mut() {
@@ -197,8 +269,12 @@ fn on_build_bob (
 
             commands.spawn((
                 Head,
-                Mesh2d(meshes.add(Rectangle::new(25.0, 25.0))),
-                MeshMaterial2d(materials.add(HEAD_COLOR)),
+                Health::new(50.0),
+                Sprite {
+                    color: HEAD_COLOR,
+                    custom_size: Some(Vec2::new(25.0, 25.0)),
+                    ..default()
+                },
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                 Name::new("Head"),
             ));//.observe(update_selected_on);
