@@ -36,8 +36,8 @@ struct HeadInventory {
     count: u32,
 }
 
-#[derive(Component)]
-struct Selected;
+//#[derive(Component)]
+//struct Selected;
 
 #[derive(Component)]
 struct Enemy;
@@ -74,6 +74,13 @@ enum MenuButton {
 }
 
 #[derive(Component)]
+enum BobState {
+    Attacking,
+    Idling,
+    Scouting,
+}
+
+#[derive(Component)]
 struct OriginalColor(Color);
 
 
@@ -84,8 +91,9 @@ fn main() {
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
         .add_observer(on_attack)
+        .add_observer(on_scout)
         .add_systems(Startup, (setup, test_data))
-        .add_systems(Update, button_system)
+        .add_systems(Update, (button_system, scouting_system))
         .run();
 }
 
@@ -228,6 +236,33 @@ fn button_system(
     }
 }
 
+fn scouting_system(
+    mut query: Query<(Entity, &mut Transform, &BobState), With<Head>>,
+    mut commands: Commands,
+    time: Res<Time>,
+) {
+    for (entity, mut transform, state) in query.iter_mut() {
+        if matches!(state, BobState::Scouting) {
+            // Move towards bottom of screen
+            let movement_speed = 50.0; // pixels per second
+            let target = Vec2::new(0.0, -400.0); //maybe choose dynamically where the end of the screen is instead of hard numbers
+
+            let current_position = transform.translation.xy();
+            let distance = target.distance(current_position);
+            if distance > 5.0 {
+                let direction = (target-current_position).normalize();
+                transform.translation.x += direction.x * movement_speed * time.delta_secs();
+                transform.translation.y += direction.y * movement_speed * time.delta_secs();
+            }
+            else {
+                println!("Scout {:?} has reached the bottom! Removing from screen.", entity);
+                commands.entity(entity).despawn(); //Should probably add some more logic beyond this to set them into a queue or something
+                //so that they can return to idling after a certain amount of time, maybe a separate system?
+            }
+        }
+    }
+}
+
 fn on_attack(
     _trigger: On<AttackEvent>,
     mut enemy_query: Query<&mut Health, With<Enemy>>,
@@ -244,9 +279,17 @@ fn on_attack(
 
 fn on_scout(
     _trigger: On<ScoutEvent>,
-    mut commands: Commands,
+    mut query: Query<(Entity, &mut BobState), With<Head>>,
+    mut grid_state: ResMut<GridState>,
 ) {
-    todo!()
+    // Find the first idle bob and change its state directly
+    if let Some((entity, mut state)) = query.iter_mut().find(|(_, state)| matches!(**state, BobState::Idling)) {
+        *state = BobState::Scouting;
+        grid_state.next_position -= 1; // since one bob has left the grid, we decrease next position in grid
+        println!("Sent head {:?} on scouting mission!", entity);
+    } else { 
+        println!("There are no idle bobs available!"); 
+    }
 }
 
 // New system to handle bob building
@@ -277,6 +320,7 @@ fn on_build_bob (
                 },
                 Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
                 Name::new("Head"),
+                BobState::Idling,
             ));//.observe(update_selected_on);
 
         } else {
