@@ -272,12 +272,12 @@ fn scouting_system(
 }
 
 fn attacking_system(
-    mut bob_query: Query<(Entity, &Bob, &mut Attack)>,
+    mut bob_query: Query<(Entity, &mut Bob, &mut Attack)>,
     mut enemy_query: Query<&mut Health, With<Enemy>>,
     time: Res<Time>,
     mut commands: Commands,
 ) {
-    for (entity, bob, mut attack) in bob_query.iter_mut() {
+    for (entity, mut bob, mut attack) in bob_query.iter_mut() {
         if attack.current_cooldown <= 0.0 {
             // Try to get the enemy's health and apply damage
             if let Ok(mut health) = enemy_query.get_mut(attack.target_entity) {
@@ -291,6 +291,8 @@ fn attacking_system(
             } else {
                 // Target no longer exists, remove Attack component
                 commands.entity(entity).remove::<Attack>();
+                bob.state = BobState::Idling;
+                continue;
             }
             attack.current_cooldown = attack.max_cooldown;
         } else {
@@ -355,8 +357,22 @@ fn bob_system(
                 }                
             },
             BobState::Idling => {
-                // Idle logic here - just skip to next iteration
-                continue;
+                let grid_pos = calculate_grid_position(grid_state.next_position);
+                let distance_to_target = transform.translation.xy().distance(grid_pos);
+                if distance_to_target > 5.0 {
+                    // not in range yet, make it move towards the target
+                    if maybe_movement.is_none() {
+                        commands.entity(entity).insert(Movement {
+                            speed: 100.0,
+                            target: grid_pos,
+                        });
+                    }
+                } else {
+                    // in range, remove Movement component to stop moving 
+                    if let Some(movement) = maybe_movement {
+                        commands.entity(entity).remove::<Movement>();
+                    } 
+                }
             },
             BobState::Scouting => {                
 
