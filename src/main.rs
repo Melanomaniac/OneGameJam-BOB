@@ -2,6 +2,8 @@ use bevy::{input_focus::InputFocus, log::tracing_subscriber::fmt::time, prelude:
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
 
+mod ui;
+use ui::setup_build_bob_ui;
 
 const NORMAL_ATTACK: Color = Color::srgb(1.0,0.0, 0.0);
 const NORMAL_BUILD: Color = Color::srgb(0.9,0.3, 0.0);
@@ -31,6 +33,17 @@ struct StartAttackingEvent;
 
 #[derive(Component)]
 struct Head;
+
+#[derive(Component)]
+struct Body;
+
+#[derive(Component)]
+struct Arm;
+
+#[derive(Component)]
+struct Leg;
+
+
 
 #[derive(Component)]
 struct HeadInventory {
@@ -117,7 +130,7 @@ fn main() {
         .add_observer(on_build_bob)
         .add_observer(on_attack)
         .add_observer(on_scout)
-        .add_systems(Startup, (setup, test_data))
+        .add_systems(Startup, (setup, test_data, setup_build_bob_ui))
         .add_systems(Update, (button_system, bob_system, movement_system, scouting_system, attacking_system))
         .run();
 }
