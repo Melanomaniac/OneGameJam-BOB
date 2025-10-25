@@ -7,10 +7,11 @@ enum MenuButton {
     Scout,
 }
 
-const NORMAL_ATTACK: Color  = Color::srgb(1.0,0.0, 0.0);
-const NORMAL_BUILD: Color   = Color::srgb(0.9,0.3, 0.0);
-const NORMAL_SCOUT: Color   = Color::srgb(0.0, 0.0, 1.0);
-//const PRESSED_COLOR: Color  = Color::WHITE; might use it later for clicked?
+const NORMAL_ATTACK: Color = Color::srgb(1.0,0.0, 0.0);
+const NORMAL_BUILD: Color = Color::srgb(0.9,0.3, 0.0);
+const NORMAL_SCOUT: Color = Color::srgb(0.0, 0.0, 1.0);
+
+const HOVER_COLOR: Color =  Color::WHITE;
 
 
 fn main() {
@@ -18,7 +19,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .init_resource::<InputFocus>()
         .add_systems(Startup, setup)
-        //.add_systems(Update, button_system)
+        .add_systems(Update, button_system)
         .run();
 }
 
@@ -56,9 +57,11 @@ fn spawn_button(
                 height: Val::Px(65.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
             BackgroundColor(colour),
+            BorderColor::all(colour),
             kind,
         ))
         .with_children(|parent| {
@@ -72,4 +75,47 @@ fn spawn_button(
             ));
         });
     });
+}
+
+fn button_system(
+    mut interaction_query: Query<(&Interaction, &MenuButton, &mut BackgroundColor, &mut BorderColor ), (Changed<Interaction>, With<Button>)>,
+) {
+    for (interaction, button_type, mut bg_color, mut border_color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                let original_color = match button_type {
+                    MenuButton::Attack => NORMAL_ATTACK,
+                    MenuButton::Build => NORMAL_BUILD,
+                    MenuButton::Scout => NORMAL_SCOUT,
+                };
+                let click_color = Color::srgb(
+                    original_color.to_srgba().red * 0.7,
+                    original_color.to_srgba().green * 0.7,
+                    original_color.to_srgba().blue * 0.7,
+                );
+                *bg_color = click_color.into();
+            },
+
+            Interaction::Hovered => {
+                *border_color = HOVER_COLOR.into();
+                let original_color = match button_type {
+                    MenuButton::Attack => NORMAL_ATTACK,
+                    MenuButton::Build => NORMAL_BUILD,
+                    MenuButton::Scout => NORMAL_SCOUT,
+                };
+                *bg_color = original_color.into();
+            },
+            
+            Interaction::None => {
+                // Reset everything
+                let original_color = match button_type {
+                    MenuButton::Attack => NORMAL_ATTACK,
+                    MenuButton::Build => NORMAL_BUILD,
+                    MenuButton::Scout => NORMAL_SCOUT,
+                };
+                *bg_color = original_color.into();
+                *border_color = original_color.into();
+            },
+        }
+    }
 }
