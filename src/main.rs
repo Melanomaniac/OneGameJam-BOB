@@ -340,6 +340,7 @@ fn movement_system(
 
 fn scouting_system(
     mut query: Query<(Entity, &mut Bob, Option<&Scout>), With<Head>>,
+    mut inventory_query: Query<&mut ComponentsInventory>,
     mut commands: Commands,
     mut grid_state: ResMut<GridState>,
 ) {
@@ -354,6 +355,10 @@ fn scouting_system(
                 // TODO: Add loot to inventory
                 // For now, just attach it as a component to the bob
                 commands.entity(entity).insert(loot);
+                // add to the component inventory
+                let mut inventory = inventory_query.single_mut().unwrap();
+                inventory.count += 3;
+
                 commands.entity(entity).remove::<Scout>();
                 
                 // Find first available grid position and assign it
@@ -644,12 +649,12 @@ fn on_build_bob (
             return; // Exit early if not all slots are filled
         }
         
-        if inventory.count > 0 {
+        if filled_slots == total_slots {
             // Find the first available grid position
             if let Some(grid_position) = grid_state.find_first_available() {
                 // Deduct one head from inventory
-                inventory.count -= 1;
-                println!("Used 1 head, {} remaining", inventory.count);
+                // inventory.count -= 1;
+                println!("built 1 bob, {} remaining parts:", inventory.count);
                 
                 let grid_pos = calculate_grid_position(grid_position);
                 grid_state.occupy(grid_position);  // Mark this position as occupied
@@ -677,7 +682,7 @@ fn on_build_bob (
                 println!("Grid is full! Cannot spawn more Bobs.");
             }
         } else {
-            println!("No heads available in inventory!");
+            println!("No robot components available in inventory!");
         }
     } else {
         println!("No inventory found!");
