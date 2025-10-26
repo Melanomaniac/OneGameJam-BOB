@@ -60,6 +60,19 @@ pub fn setup_build_bob_ui(mut commands: Commands) {
         BackgroundColor(Color::srgb(0.2, 0.2, 0.3)),
         BorderColor::all(Color::srgb(0.5, 0.5, 0.6)),
     )).with_children(|parent| {
+        //text label/tile for the builder UI
+        parent.spawn((
+            Text::new("Construct a B.O.B."),
+            TextFont {
+                font_size: 20.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Node {
+                margin: UiRect::bottom(Val::Px(10.0)),
+                ..default()
+            },
+        ));
         // Head slot (top)
         parent.spawn((
             Node {

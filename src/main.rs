@@ -1,6 +1,7 @@
 use bevy::{ecs::component, input_focus::InputFocus, log::tracing_subscriber::fmt::time, prelude::*};
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 //use bevy::picking::pointer::PointerInteraction; Useful for selectable meshes
+use std::process;
 
 mod ui;
 use ui::*;
@@ -12,6 +13,15 @@ const NORMAL_BUILD: Color = Color::srgb(0.9,0.3, 0.0);
 const NORMAL_SCOUT: Color = Color::srgb(0.0, 0.0, 1.0);
 const HOVER_COLOR: Color =  Color::WHITE;
 const HEAD_COLOR: Color = Color::srgb(0.0, 0.0, 1.0); //Removed later when not just squares
+
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+enum GameStates {
+    #[default]
+    Playing,
+    Win,
+    Loss,
+}
+
 
 #[derive(Resource)]
 struct GridState {
@@ -95,7 +105,6 @@ enum BobState {
     Scouting,
 }
 
-
 #[derive(Component)]
 struct Health {
     current: f32,
@@ -166,13 +175,18 @@ fn main() {
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
         .add_plugins(EguiPlugin::default())
         .add_plugins(bevy_inspector_egui::quick::WorldInspectorPlugin::new())
+        .init_state::<GameStates>()
         .init_resource::<InputFocus>()
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
         .add_observer(on_reset_ui)
         .add_observer(on_attack)
         .add_observer(on_scout)
-        .add_systems(Startup, (setup, test_data,setup_build_bob_ui))
+        .add_systems(OnEnter(GameStates::Win), win_screen)
+        .add_systems(OnEnter(GameStates::Loss), loss_screen)
+        .add_systems(OnExit(GameStates::Win), cleanup_win_screen)
+        .add_systems(OnExit(GameStates::Loss), cleanup_loss_screen)
+        .add_systems(Startup, (setup, test_data, setup_build_bob_ui))
         .add_systems(Update, (
             button_system, 
             bob_system, 
@@ -181,6 +195,7 @@ fn main() {
             scouting_system, 
             attacking_system,
             enemy_system,
+            play_again_button_system,
         ))
         .run();
 }
@@ -401,6 +416,7 @@ fn attacking_system(
     time: Res<Time>,
     mut commands: Commands,
     mut grid_state: ResMut<GridState>,
+    mut next_state: ResMut<NextState<GameStates>>, // Add this parameter
 ) {
     // Handle all attacks (both Bobs and Enemies)
     for (entity, maybe_bob, mut attack) in attacker_query.iter_mut() {
@@ -418,11 +434,12 @@ fn attacking_system(
                 if health.is_dead() {
                     if maybe_bob.is_some() {
                         println!("Target defeated by Bob!");
+                        next_state.set(GameStates::Win);
                     } else {
                         println!("Home Base destroyed!");
-                        // TODO: Handle game over
+                        next_state.set(GameStates::Loss);
                     }
-                    commands.entity(attack.target_entity).despawn();
+                    //commands.entity(attack.target_entity).despawn();
                 }
             } else {
                 // Target no longer exists, remove Attack component
@@ -747,4 +764,12 @@ fn calculate_grid_position(position: usize) -> Vec2 {
     let y = GRID_START_Y + (row as f32 * TOTAL_SPACING);
 
     Vec2::new(x,y)
+}
+
+fn restart_game() {
+    println!("Restarting application...");
+    // Get the current executable path and restart
+    let current_exe = std::env::current_exe().unwrap();
+    process::Command::new(current_exe).spawn().unwrap();
+    process::exit(0);
 }
