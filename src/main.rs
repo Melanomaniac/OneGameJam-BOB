@@ -174,8 +174,9 @@ fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
         .add_plugins(EguiPlugin::default())
-        .add_plugins(bevy_inspector_egui::quick::WorldInspectorPlugin::new())
+
         .init_state::<GameStates>()
+        // .add_plugins(bevy_inspector_egui::quick::WorldInspectorPlugin::new())
         .init_resource::<InputFocus>()
         .init_resource::<GridState>()
         .add_observer(on_build_bob)
