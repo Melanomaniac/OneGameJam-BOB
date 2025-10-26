@@ -8,6 +8,25 @@ use ui::*;
 mod loot;
 use loot::*;
 
+// Floating text components
+#[derive(Component)]
+struct FloatingText {
+    timer: Timer,
+    velocity: Vec3,
+}
+
+#[derive(Component)]
+struct DamageText;
+
+impl FloatingText {
+    fn new(duration: f32) -> Self {
+        Self {
+            timer: Timer::from_seconds(duration, TimerMode::Once),
+            velocity: Vec3::new(0.0, 100.0, 0.0), // Float upward
+        }
+    }
+}
+
 const NORMAL_ATTACK: Color = Color::srgb(1.0,0.0, 0.0);
 const NORMAL_BUILD: Color = Color::srgb(0.9,0.3, 0.0);
 const NORMAL_SCOUT: Color = Color::srgb(0.0, 0.0, 1.0);
@@ -197,6 +216,7 @@ fn main() {
             attacking_system,
             enemy_system,
             play_again_button_system,
+            floating_text_system,
         ))
         .run();
 }
@@ -205,6 +225,26 @@ fn main() {
 //TODO, DELETE THIS LATER, ONLY FOR TESTING
 fn test_data(mut commands:Commands) {
     commands.spawn(ComponentsInventory { count: 10 });
+}
+
+// Floating text system function
+fn spawn_floating_text(
+    commands: &mut Commands,
+    position: Vec3,
+    text: String,
+    color: Color,
+) {
+    commands.spawn((
+        Text2d::new(text),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(color),
+        Transform::from_translation(position + Vec3::new(0.0, 50.0, 1.0)), // Slightly above the entity
+        FloatingText::new(2.0), // Show for 2 seconds
+        DamageText,
+    ));
 }
 
 fn setup(mut commands: Commands, q_window: Query<&Window>, asset_server: Res<AssetServer>) {
@@ -412,32 +452,64 @@ fn scouting_system(
 }
 
 fn attacking_system(
-    mut attacker_query: Query<(Entity, Option<&mut Bob>, &mut Attack)>,
-    mut health_query: Query<&mut Health>,
+    mut attacker_query: Query<(Entity, Option<&mut Bob>, &mut Attack, &Transform)>, // Add Transform
+    mut health_query: Query<(&mut Health, &Transform)>, // Add Transform
     time: Res<Time>,
     mut commands: Commands,
     mut grid_state: ResMut<GridState>,
-    mut next_state: ResMut<NextState<GameStates>>, // Add this parameter
+    mut next_state: ResMut<NextState<GameStates>>,
 ) {
     // Handle all attacks (both Bobs and Enemies)
-    for (entity, maybe_bob, mut attack) in attacker_query.iter_mut() {
+    for (entity, maybe_bob, mut attack, attacker_transform) in attacker_query.iter_mut() {
         if attack.current_cooldown <= 0.0 {
             // Try to get the target's health and apply damage
-            if let Ok(mut health) = health_query.get_mut(attack.target_entity) {
+            if let Ok((mut health, target_transform)) = health_query.get_mut(attack.target_entity) {
                 health.take_damage(attack.damage);
                 
+                // Spawn floating damage text
+                spawn_floating_text(
+                    &mut commands,
+                    target_transform.translation,
+                    format!("-{}", attack.damage as i32),
+                    Color::srgb(1.0, 0.2, 0.2), // Red damage numbers
+                );
+                
                 if let Some(_) = maybe_bob {
-                    println!("Bob {:?} dealt {} damage! Target health: {}/{}", entity, attack.damage, health.current, health.max);
+                    // Spawn attack message
+                    spawn_floating_text(
+                        &mut commands,
+                        attacker_transform.translation,
+                        "BOB ATTACK!".to_string(),
+                        Color::srgb(0.2, 0.8, 1.0), // Blue for Bob
+                    );
                 } else {
-                    println!("Enemy {:?} dealt {} damage! Target health: {}/{}", entity, attack.damage, health.current, health.max);
+                    // Spawn enemy attack message
+                    spawn_floating_text(
+                        &mut commands,
+                        attacker_transform.translation,
+                        "ENEMY ATTACK!".to_string(),
+                        Color::srgb(1.0, 0.8, 0.2), // Orange for enemy
+                    );
                 }
                 
                 if health.is_dead() {
                     if maybe_bob.is_some() {
-                        println!("Target defeated by Bob!");
+                        // Spawn victory message
+                        spawn_floating_text(
+                            &mut commands,
+                            target_transform.translation,
+                            "VICTORY!".to_string(),
+                            Color::srgb(0.0, 1.0, 0.0), // Green for victory
+                        );
                         next_state.set(GameStates::Win);
                     } else {
-                        println!("Home Base destroyed!");
+                        // Spawn defeat message
+                        spawn_floating_text(
+                            &mut commands,
+                            target_transform.translation,
+                            "BASE DESTROYED!".to_string(),
+                            Color::srgb(1.0, 0.0, 0.0), // Red for defeat
+                        );
                         next_state.set(GameStates::Loss);
                     }
                     //commands.entity(attack.target_entity).despawn();
@@ -453,7 +525,13 @@ fn attacking_system(
                         grid_state.occupy(new_grid_pos);
                         bob.state = BobState::Idling;
                     } else {
-                        println!("Warning: No available grid position for returning attacker!");
+                        // Just replace println with floating text - keep original logic
+                        spawn_floating_text(
+                            &mut commands,
+                            attacker_transform.translation,
+                            "NO GRID SPACE!".to_string(),
+                            Color::srgb(1.0, 1.0, 0.0),
+                        );
                     }
                 }
                 continue;
@@ -461,6 +539,24 @@ fn attacking_system(
             attack.current_cooldown = attack.max_cooldown;
         } else {
             attack.current_cooldown -= time.delta_secs();
+        }
+    }
+}
+
+fn floating_text_system(
+    mut query: Query<(Entity, &mut Transform, &mut FloatingText)>,
+    mut commands: Commands,
+    time: Res<Time>,
+) {
+    for (entity, mut transform, mut floating_text) in query.iter_mut() {
+        // Move the text upward
+        transform.translation += floating_text.velocity * time.delta_secs();
+        
+        // Fade out over time
+        floating_text.timer.tick(time.delta());
+        
+        if floating_text.timer.finished() {
+            commands.entity(entity).despawn();
         }
     }
 }
