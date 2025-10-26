@@ -79,6 +79,9 @@ struct HeadInventory {
 struct Enemy;
 
 #[derive(Component)]
+struct HomeBase;
+
+#[derive(Component)]
 struct Bob{
     state: BobState,
     grid_position: usize,  // Each Bob remembers its own grid slot
@@ -143,6 +146,19 @@ struct Attack{
     current_cooldown: f32,
 }
 
+#[derive(Component)]
+struct Size(Vec2);
+
+impl Size {
+    fn new(width: f32, height: f32) -> Self {
+        Self(Vec2::new(width, height))
+    }
+    
+    fn square(size: f32) -> Self {
+        Self(Vec2::new(size, size))
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin))
@@ -154,7 +170,14 @@ fn main() {
         .add_observer(on_attack)
         .add_observer(on_scout)
         .add_systems(Startup, (setup, test_data))
-        .add_systems(Update, (button_system, bob_system, movement_system, scouting_system, attacking_system))
+        .add_systems(Update, (
+            button_system, 
+            bob_system, 
+            movement_system, 
+            scouting_system, 
+            attacking_system,
+            enemy_system,
+        ))
         .run();
 }
 
@@ -168,13 +191,31 @@ fn setup(mut commands: Commands) {
     commands.spawn(Camera2d); //camera setup
 
     // Spawn an enemy entity
+    let enemy_size = Size::new(100.0, 100.0);
+    let enemy_size_vec = enemy_size.0;  // Extract Vec2 before moving
+
     commands.spawn((
-        Enemy,
-        Sprite{ color: Color::srgb(0.8, 0.2, 0.2),
-            custom_size: Some(Vec2::new(100.0,100.0)),
+        HomeBase,
+        Size::new(150.0, 20.0),
+        Sprite{
+            color: Color::srgb(0.2, 0.8, 0.2),
+            custom_size: Some(Vec2::new(150.0, 20.0)),
             ..default()
         },
-        Transform::from_xyz(0.0, 270.0, 1.0),
+        Transform::from_xyz(0.0, 50.0, 1.0),
+        Name::new("Home Base"),
+        Health::new(500.0),
+    ));
+
+        commands.spawn((
+        Enemy,
+        enemy_size,
+        Sprite{ 
+            color: Color::srgb(0.8, 0.2, 0.2),
+            custom_size: Some(enemy_size_vec),
+            ..default()
+        },
+        Transform::from_xyz(0.0, 320.0, 1.0),
         Health::new(100.0),
         Name::new("Enemy"),
     ));
@@ -276,17 +317,16 @@ fn button_system(
 
 fn movement_system(
     mut query: Query<(Entity, &mut Transform, &Movement)>,
-    mut commands: Commands,
     time: Res<Time>, 
 ) {    
-    for (entity, mut transform, movement) in query.iter_mut() {
+    for (_entity, mut transform, movement) in query.iter_mut() {
 
         let movement_speed = movement.speed; // pixels per second
         let target = movement.target;
 
         let current_position = transform.translation.xy();
         let distance = target.distance(current_position);
-        if distance >= 0.0 {
+        if distance >= 2.0 {
             let direction = (target-current_position).normalize();
             transform.translation.x += direction.x * movement_speed * time.delta_secs();
             transform.translation.y += direction.y * movement_speed * time.delta_secs();
@@ -326,34 +366,47 @@ fn scouting_system(
 }
 
 fn attacking_system(
-    mut bob_query: Query<(Entity, &mut Bob, &mut Attack)>,
-    mut enemy_query: Query<&mut Health, With<Enemy>>,
+    mut attacker_query: Query<(Entity, Option<&mut Bob>, &mut Attack)>,
+    mut health_query: Query<&mut Health>,
     time: Res<Time>,
     mut commands: Commands,
     mut grid_state: ResMut<GridState>,
 ) {
-    for (entity, mut bob, mut attack) in bob_query.iter_mut() {
+    // Handle all attacks (both Bobs and Enemies)
+    for (entity, maybe_bob, mut attack) in attacker_query.iter_mut() {
         if attack.current_cooldown <= 0.0 {
-            // Try to get the enemy's health and apply damage
-            if let Ok(mut health) = enemy_query.get_mut(attack.target_entity) {
+            // Try to get the target's health and apply damage
+            if let Ok(mut health) = health_query.get_mut(attack.target_entity) {
                 health.take_damage(attack.damage);
-                println!("Bob {:?} dealt {} damage! Enemy health: {}/{}", entity, attack.damage, health.current, health.max);
+                
+                if let Some(_) = maybe_bob {
+                    println!("Bob {:?} dealt {} damage! Target health: {}/{}", entity, attack.damage, health.current, health.max);
+                } else {
+                    println!("Enemy {:?} dealt {} damage! Target health: {}/{}", entity, attack.damage, health.current, health.max);
+                }
                 
                 if health.is_dead() {
-                    println!("Enemy defeated!");
+                    if maybe_bob.is_some() {
+                        println!("Target defeated by Bob!");
+                    } else {
+                        println!("Home Base destroyed!");
+                        // TODO: Handle game over
+                    }
                     commands.entity(attack.target_entity).despawn();
                 }
             } else {
-                // Target no longer exists, remove Attack component and return to grid
+                // Target no longer exists, remove Attack component
                 commands.entity(entity).remove::<Attack>();
                 
-                // Find first available grid position and assign it
-                if let Some(new_grid_pos) = grid_state.find_first_available() {
-                    bob.grid_position = new_grid_pos;
-                    grid_state.occupy(new_grid_pos);
-                    bob.state = BobState::Idling;
-                } else {
-                    println!("Warning: No available grid position for returning attacker!");
+                // If this is a Bob, return it to grid
+                if let Some(mut bob) = maybe_bob {
+                    if let Some(new_grid_pos) = grid_state.find_first_available() {
+                        bob.grid_position = new_grid_pos;
+                        grid_state.occupy(new_grid_pos);
+                        bob.state = BobState::Idling;
+                    } else {
+                        println!("Warning: No available grid position for returning attacker!");
+                    }
                 }
                 continue;
             }
@@ -365,15 +418,15 @@ fn attacking_system(
 }
 
 fn bob_system(
-    query: Query<(Entity, &Bob, &Transform, Option<&Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
-    enemy_query: Query<(Entity, &Transform, &Enemy, &Health)>,
+    mut query: Query<(Entity, &Bob, &Transform, Option<&mut Movement>, Option<&Scout>, Option<&Attack>), With<Head>>,
+    enemy_query: Query<(Entity, &Transform, &Size, &Enemy, &Health)>,
     mut commands: Commands,
 ) {
 
     // Position for scouting
     let scout_target = Vec2::new(0.0, -400.0); 
 
-    for (entity, bob,  transform, maybe_movement, maybe_scout, maybe_attack) in query.iter() {
+    for (entity, bob,  transform, maybe_movement, maybe_scout, maybe_attack) in query.iter_mut() {
         match bob.state {
             BobState::Attacking => {
                 // Attack logic here - check if it has Movement component for attack behavior
@@ -386,25 +439,30 @@ fn bob_system(
                     return;
                 };
                 
-                let (enemy_entity, enemy_transform, _enemy, enemy_health) = enemy_data;
-                let attack_target_pos = enemy_transform.translation.xy();
+                let (enemy_entity, enemy_transform, enemy_size, _enemy, enemy_health) = enemy_data;
+                
+                // Calculate attack position just below the enemy sprite
+                let enemy_pos = enemy_transform.translation.xy();
+                let attack_target_pos = Vec2::new(
+                    enemy_pos.x,
+                    enemy_pos.y - (enemy_size.0.y / 2.0) // Just below the bottom edge
+                );
 
                 // is it in distance of attack target?
                 let distance_to_target = transform.translation.xy().distance(attack_target_pos);
-                if distance_to_target > 1.0 {
+                if distance_to_target > 2.0 {
                     // not in range yet, make it move towards the target
-                    if maybe_movement.is_none() {
+                    if let Some(mut movement) = maybe_movement {
+                        // Update existing movement target
+                        movement.target = attack_target_pos;
+                    } else {
+                        // No movement component yet, insert one
                         commands.entity(entity).insert(Movement {
                             speed: 100.0,
                             target: attack_target_pos,
                         });
                     }
                 } else {
-                    // in range, remove Movement component to stop moving 
-                    if maybe_movement.is_some() {
-                        commands.entity(entity).remove::<Movement>();
-                    }
-
                     if enemy_health.is_dead() == false {
                         if maybe_attack.is_none() {
                             commands.entity(entity).insert(Attack {
@@ -420,9 +478,13 @@ fn bob_system(
             BobState::Idling => {
                 let grid_pos = calculate_grid_position(bob.grid_position);
                 let distance_to_target = transform.translation.xy().distance(grid_pos);
-                if distance_to_target > 1.0 {
+                if distance_to_target > 2.0 {
                     // not in range yet, make it move towards the target
-                    if maybe_movement.is_none() {
+                    if let Some(mut movement) = maybe_movement {
+                        // Update existing movement target
+                        movement.target = grid_pos;
+                    } else {
+                        // No movement component yet, insert one
                         commands.entity(entity).insert(Movement {
                             speed: 100.0,
                             target: grid_pos,
@@ -439,9 +501,13 @@ fn bob_system(
 
                 // is it in distance of scouting target?
                 let distance_to_target = transform.translation.xy().distance(scout_target);
-                if distance_to_target > 1.0 {
+                if distance_to_target > 2.0 {
                     // not in range yet, make it move towards the target
-                    if maybe_movement.is_none() {
+                    if let Some(mut movement) = maybe_movement {
+                        // Update existing movement target
+                        movement.target = scout_target;
+                    } else {
+                        // No movement component yet, insert one
                         commands.entity(entity).insert(Movement {
                             speed: 100.0,
                             target: scout_target,
@@ -457,6 +523,65 @@ fn bob_system(
                         commands.entity(entity).insert(Scout);
                     }
                 }
+            }
+        }
+    }
+}
+
+
+fn enemy_system(
+    mut enemy_query: Query<(Entity, &Transform, Option<&mut Movement>, Option<&Attack>), With<Enemy>>,
+    home_base_query: Query<(Entity, &Transform, &Size), With<HomeBase>>,
+    mut commands: Commands,
+) {
+    // Get home base data
+    let home_base_data = if let Some(data) = home_base_query.iter().next() {
+        data
+    } else {
+        // No home base found, exit early
+        return;
+    };
+    
+    let (home_base_entity, home_base_transform, home_base_size) = home_base_data;
+    
+    // Calculate attack position (above the home base)
+    let home_base_pos = home_base_transform.translation.xy();
+    let attack_target_pos = Vec2::new(
+        home_base_pos.x,
+        home_base_pos.y + (home_base_size.0.y / 2.0) // Just above the top edge
+    );
+    
+    for (entity, transform, maybe_movement, maybe_attack) in enemy_query.iter_mut() {
+        let distance_to_target = transform.translation.xy().distance(attack_target_pos);            
+        
+        if distance_to_target > 2.0 {
+            // Not in range yet, make it move towards the target
+            if let Some(mut movement) = maybe_movement {
+                // Update existing movement target
+                movement.target = attack_target_pos;
+            } else {
+                // No movement component yet, insert one
+                println!("Inserting Movement component for enemy {:?}", entity);
+                commands.entity(entity).insert(Movement {
+                    speed: 10.0,
+                    target: attack_target_pos,
+                });
+            }
+        } else {
+            // In range, remove Movement component to stop moving
+            if maybe_movement.is_some() {
+                commands.entity(entity).remove::<Movement>();
+            }
+            
+            // Start attacking if not already attacking
+            if maybe_attack.is_none() {
+                println!("Enemy {:?} reached home base!", entity);
+                commands.entity(entity).insert(Attack {
+                    target_entity: home_base_entity,
+                    damage: 20.0,
+                    max_cooldown: 5.0,
+                    current_cooldown: 0.0,  // Start at 0 to attack immediately
+                });
             }
         }
     }
@@ -513,16 +638,19 @@ fn on_build_bob (
                 let grid_pos = calculate_grid_position(grid_position);
                 grid_state.occupy(grid_position);  // Mark this position as occupied
 
+                let bob_size = Size::square(25.0);
+                let bob_size_vec = bob_size.0;  // Extract Vec2 before moving
                 commands.spawn((
                     Bob { 
                         state: BobState::Idling,
-                        grid_position,  // Store the grid position in the Bob
+                        grid_position,
                     },
                     Head,
                     Health::new(50.0),
+                    bob_size,
                     Sprite {
                         color: HEAD_COLOR,
-                        custom_size: Some(Vec2::new(25.0, 25.0)),
+                        custom_size: Some(bob_size_vec),
                         ..default()
                     },
                     Transform::from_xyz(grid_pos.x, grid_pos.y, 2.),
