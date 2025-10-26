@@ -191,19 +191,21 @@ fn test_data(mut commands:Commands) {
     commands.spawn(ComponentsInventory { count: 10 });
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, q_window: Query<&Window>, asset_server: Res<AssetServer>) {
     commands.spawn(Camera2d); //camera setup
 
     // Spawn an enemy entity
-    let enemy_size = Size::new(100.0, 100.0);
+    let enemy_size = Size::new(200.0, 200.0);
     let enemy_size_vec = enemy_size.0;  // Extract Vec2 before moving
 
+    let homeBase_size = Size::new(300.0, 300.0);
+    let homeBase_size_vec = homeBase_size.0;
     commands.spawn((
         HomeBase,
-        Size::new(150.0, 20.0),
+        homeBase_size,
         Sprite{
-            color: Color::srgb(0.2, 0.8, 0.2),
-            custom_size: Some(Vec2::new(150.0, 20.0)),
+            image: asset_server.load("sprites/HomeBase.png"),
+            custom_size: Some(homeBase_size_vec),
             ..default()
         },
         Transform::from_xyz(0.0, 50.0, 1.0),
@@ -215,12 +217,12 @@ fn setup(mut commands: Commands) {
         Enemy,
         enemy_size,
         Sprite{ 
-            color: Color::srgb(0.8, 0.2, 0.2),
+            image: asset_server.load("sprites/Enemy.png"),
             custom_size: Some(enemy_size_vec),
             ..default()
         },
         Transform::from_xyz(0.0, 320.0, 1.0),
-        Health::new(100.0),
+        Health::new(1000.0),
         Name::new("Enemy"),
     ));
 
@@ -236,7 +238,7 @@ fn setup(mut commands: Commands) {
             bottom: Val::Px(0.0),
             ..default()
         }
-    );
+    );    
     
     // spawn_sprite(&mut root, 100.0, 100.0, Color::srgb(0.8, 0.2, 0.2));
     
@@ -244,8 +246,27 @@ fn setup(mut commands: Commands) {
     spawn_button(&mut root, MenuButton::Build,  "Build!",  NORMAL_BUILD);
     spawn_button(&mut root, MenuButton::Scout,  "Scout!",  NORMAL_SCOUT);
     
-    //Should implement a bob spawning grid here (To the side of the build button
+    // Spawn fullscreen background sprite
+    if let Ok(window) = q_window.single() {
+        let sprite_size = Vec2::new(window.width(), window.height());
+        commands.spawn((
+            Sprite {
+                image: asset_server.load("sprites/Background.png"),
+                custom_size: Some(sprite_size),
+                ..default()
+            },
+            Transform::from_xyz(0.0, 0.0, 0.0), // Centered, behind everything (z=0)
+            Name::new("Background"),
+        ));
+    }
 }
+
+
+fn spawn_background_sprite() {
+
+}
+
+
 
 fn spawn_button(
     parent: &mut EntityCommands,
@@ -587,7 +608,7 @@ fn enemy_system(
                 println!("Enemy {:?} reached home base!", entity);
                 commands.entity(entity).insert(Attack {
                     target_entity: home_base_entity,
-                    damage: 20.0,
+                    damage: 50.0,
                     max_cooldown: 5.0,
                     current_cooldown: 0.0,  // Start at 0 to attack immediately
                 });
@@ -634,6 +655,7 @@ fn on_build_bob (
     mut query: Query<&mut ComponentsInventory>, //can be changed to inventory later?
     mut grid_state: ResMut<GridState>,
     slot_query: Query<&SlotFilled, Or<(With<HeadSlot>, With<BodySlot>, With<LeftArmSlot>, With<RightArmSlot>, With<LeftLegSlot>, With<RightLegSlot>)>>,
+    asset_server: Res<AssetServer>
 ) {
     if let Ok(mut inventory) = query.single_mut() {
         println!("Found {} heads in inventory", inventory.count);
@@ -659,7 +681,7 @@ fn on_build_bob (
                 let grid_pos = calculate_grid_position(grid_position);
                 grid_state.occupy(grid_position);  // Mark this position as occupied
 
-                let bob_size = Size::square(25.0);
+                let bob_size = Size::square(100.0);
                 let bob_size_vec = bob_size.0;  // Extract Vec2 before moving
                 commands.spawn((
                     Bob { 
@@ -670,7 +692,7 @@ fn on_build_bob (
                     Health::new(50.0),
                     bob_size,
                     Sprite {
-                        color: HEAD_COLOR,
+                        image: asset_server.load("sprites/BoB.png"),
                         custom_size: Some(bob_size_vec),
                         ..default()
                     },
